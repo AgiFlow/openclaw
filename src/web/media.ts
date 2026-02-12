@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { logVerbose, shouldLogVerbose } from "../globals.js";
-import { SafeOpenError, readLocalFileSafely } from "../infra/fs-safe.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
-import { type MediaKind, maxBytesForKind } from "../media/constants.js";
+import { STATE_DIR } from "../config/paths.js";
+import { logVerbose, shouldLogVerbose } from "../globals.js";
+import { type MediaKind, maxBytesForKind, mediaKindFromMime } from "../media/constants.js";
 import { fetchRemoteMedia } from "../media/fetch.js";
 import {
   convertHeicToJpeg,
@@ -12,8 +13,7 @@ import {
   optimizeImageToPng,
   resizeToJpeg,
 } from "../media/image-ops.js";
-import { getDefaultMediaLocalRoots } from "../media/local-roots.js";
-import { detectMime, extensionForMime, kindFromMime } from "../media/mime.js";
+import { detectMime, extensionForMime } from "../media/mime.js";
 import { resolveUserPath } from "../utils.js";
 
 export type WebMediaResult = {
@@ -34,48 +34,15 @@ type WebMediaOptions = {
   readFile?: (filePath: string) => Promise<Buffer>;
 };
 
-function resolveWebMediaOptions(params: {
-  maxBytesOrOptions?: number | WebMediaOptions;
-  options?: { ssrfPolicy?: SsrFPolicy; localRoots?: readonly string[] | "any" };
-  optimizeImages: boolean;
-}): WebMediaOptions {
-  if (typeof params.maxBytesOrOptions === "number" || params.maxBytesOrOptions === undefined) {
-    return {
-      maxBytes: params.maxBytesOrOptions,
-      optimizeImages: params.optimizeImages,
-      ssrfPolicy: params.options?.ssrfPolicy,
-      localRoots: params.options?.localRoots,
-    };
-  }
-  return {
-    ...params.maxBytesOrOptions,
-    optimizeImages: params.optimizeImages
-      ? (params.maxBytesOrOptions.optimizeImages ?? true)
-      : false,
-  };
-}
-
-export type LocalMediaAccessErrorCode =
-  | "path-not-allowed"
-  | "invalid-root"
-  | "invalid-file-url"
-  | "unsafe-bypass"
-  | "not-found"
-  | "invalid-path"
-  | "not-file";
-
-export class LocalMediaAccessError extends Error {
-  code: LocalMediaAccessErrorCode;
-
-  constructor(code: LocalMediaAccessErrorCode, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.code = code;
-    this.name = "LocalMediaAccessError";
-  }
-}
-
 export function getDefaultLocalRoots(): readonly string[] {
-  return getDefaultMediaLocalRoots();
+  return [
+    os.tmpdir(),
+    path.join(STATE_DIR, "media"),
+    path.join(STATE_DIR, "agents"),
+    path.join(STATE_DIR, "workspace"),
+    path.join(STATE_DIR, "sandboxes"),
+    path.join(os.homedir(), "workspace", "agents"),
+  ];
 }
 
 async function assertLocalMediaAllowed(
@@ -93,27 +60,6 @@ async function assertLocalMediaAllowed(
   } catch {
     resolved = path.resolve(mediaPath);
   }
-
-  // Hardening: the default allowlist includes the OpenClaw temp dir, and tests/CI may
-  // override the state dir into tmp. Avoid accidentally allowing per-agent
-  // `workspace-*` state roots via the temp-root prefix match; require explicit
-  // localRoots for those.
-  if (localRoots === undefined) {
-    const workspaceRoot = roots.find((root) => path.basename(root) === "workspace");
-    if (workspaceRoot) {
-      const stateDir = path.dirname(workspaceRoot);
-      const rel = path.relative(stateDir, resolved);
-      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
-        const firstSegment = rel.split(path.sep)[0] ?? "";
-        if (firstSegment.startsWith("workspace-")) {
-          throw new LocalMediaAccessError(
-            "path-not-allowed",
-            `Local media path is not under an allowed directory: ${mediaPath}`,
-          );
-        }
-      }
-    }
-  }
   for (const root of roots) {
     let resolvedRoot: string;
     try {
@@ -122,8 +68,7 @@ async function assertLocalMediaAllowed(
       resolvedRoot = path.resolve(root);
     }
     if (resolvedRoot === path.parse(resolvedRoot).root) {
-      throw new LocalMediaAccessError(
-        "invalid-root",
+      throw new Error(
         `Invalid localRoots entry (refuses filesystem root): ${root}. Pass a narrower directory.`,
       );
     }
@@ -131,10 +76,7 @@ async function assertLocalMediaAllowed(
       return;
     }
   }
-  throw new LocalMediaAccessError(
-    "path-not-allowed",
-    `Local media path is not under an allowed directory: ${mediaPath}`,
-  );
+  throw new Error(`Local media path is not under an allowed directory: ${mediaPath}`);
 }
 
 const HEIC_MIME_RE = /^image\/hei[cf]$/i;
@@ -250,7 +192,7 @@ async function loadWebMediaInternal(
     try {
       mediaUrl = fileURLToPath(mediaUrl);
     } catch {
-      throw new LocalMediaAccessError("invalid-file-url", `Invalid file:// URL: ${mediaUrl}`);
+      throw new Error(`Invalid file:// URL: ${mediaUrl}`);
     }
   }
 
@@ -333,7 +275,7 @@ async function loadWebMediaInternal(
           : maxBytes;
     const fetched = await fetchRemoteMedia({ url: mediaUrl, maxBytes: fetchCap, ssrfPolicy });
     const { buffer, contentType, fileName } = fetched;
-    const kind = kindFromMime(contentType);
+    const kind = mediaKindFromMime(contentType);
     return await clampAndFinalize({ buffer, contentType, kind, fileName });
   }
 
@@ -343,8 +285,7 @@ async function loadWebMediaInternal(
   }
 
   if ((sandboxValidated || localRoots === "any") && !readFileOverride) {
-    throw new LocalMediaAccessError(
-      "unsafe-bypass",
+    throw new Error(
       "Refusing localRoots bypass without readFile override. Use sandboxValidated with readFile, or pass explicit localRoots.",
     );
   }
@@ -355,37 +296,9 @@ async function loadWebMediaInternal(
   }
 
   // Local path
-  let data: Buffer;
-  if (readFileOverride) {
-    data = await readFileOverride(mediaUrl);
-  } else {
-    try {
-      data = (await readLocalFileSafely({ filePath: mediaUrl })).buffer;
-    } catch (err) {
-      if (err instanceof SafeOpenError) {
-        if (err.code === "not-found") {
-          throw new LocalMediaAccessError("not-found", `Local media file not found: ${mediaUrl}`, {
-            cause: err,
-          });
-        }
-        if (err.code === "not-file") {
-          throw new LocalMediaAccessError(
-            "not-file",
-            `Local media path is not a file: ${mediaUrl}`,
-            { cause: err },
-          );
-        }
-        throw new LocalMediaAccessError(
-          "invalid-path",
-          `Local media path is not safe to read: ${mediaUrl}`,
-          { cause: err },
-        );
-      }
-      throw err;
-    }
-  }
+  const data = readFileOverride ? await readFileOverride(mediaUrl) : await fs.readFile(mediaUrl);
   const mime = await detectMime({ buffer: data, filePath: mediaUrl });
-  const kind = kindFromMime(mime);
+  const kind = mediaKindFromMime(mime);
   let fileName = path.basename(mediaUrl) || undefined;
   if (fileName && !path.extname(fileName) && mime) {
     const ext = extensionForMime(mime);
@@ -406,10 +319,18 @@ export async function loadWebMedia(
   maxBytesOrOptions?: number | WebMediaOptions,
   options?: { ssrfPolicy?: SsrFPolicy; localRoots?: readonly string[] | "any" },
 ): Promise<WebMediaResult> {
-  return await loadWebMediaInternal(
-    mediaUrl,
-    resolveWebMediaOptions({ maxBytesOrOptions, options, optimizeImages: true }),
-  );
+  if (typeof maxBytesOrOptions === "number" || maxBytesOrOptions === undefined) {
+    return await loadWebMediaInternal(mediaUrl, {
+      maxBytes: maxBytesOrOptions,
+      optimizeImages: true,
+      ssrfPolicy: options?.ssrfPolicy,
+      localRoots: options?.localRoots,
+    });
+  }
+  return await loadWebMediaInternal(mediaUrl, {
+    ...maxBytesOrOptions,
+    optimizeImages: maxBytesOrOptions.optimizeImages ?? true,
+  });
 }
 
 export async function loadWebMediaRaw(
@@ -417,10 +338,18 @@ export async function loadWebMediaRaw(
   maxBytesOrOptions?: number | WebMediaOptions,
   options?: { ssrfPolicy?: SsrFPolicy; localRoots?: readonly string[] | "any" },
 ): Promise<WebMediaResult> {
-  return await loadWebMediaInternal(
-    mediaUrl,
-    resolveWebMediaOptions({ maxBytesOrOptions, options, optimizeImages: false }),
-  );
+  if (typeof maxBytesOrOptions === "number" || maxBytesOrOptions === undefined) {
+    return await loadWebMediaInternal(mediaUrl, {
+      maxBytes: maxBytesOrOptions,
+      optimizeImages: false,
+      ssrfPolicy: options?.ssrfPolicy,
+      localRoots: options?.localRoots,
+    });
+  }
+  return await loadWebMediaInternal(mediaUrl, {
+    ...maxBytesOrOptions,
+    optimizeImages: false,
+  });
 }
 
 export async function optimizeImageToJpeg(
