@@ -167,6 +167,15 @@ export const VENICE_MODEL_CATALOG = [
     privacy: "private",
   },
   {
+    id: "zai-org-glm-5",
+    name: "GLM 5",
+    reasoning: true,
+    input: ["text"],
+    contextWindow: 200000,
+    maxTokens: 128000,
+    privacy: "private",
+  },
+  {
     id: "zai-org-glm-4.7",
     name: "GLM 4.7",
     reasoning: true,
