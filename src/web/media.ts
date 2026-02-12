@@ -41,6 +41,7 @@ export function getDefaultLocalRoots(): readonly string[] {
     path.join(STATE_DIR, "agents"),
     path.join(STATE_DIR, "workspace"),
     path.join(STATE_DIR, "sandboxes"),
+    path.join(os.homedir(), "workspace", "agents"),
   ];
 }
 
