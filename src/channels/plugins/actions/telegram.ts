@@ -60,6 +60,9 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
       actions.add("sticker");
       actions.add("sticker-search");
     }
+    if (gate("sendAttachment", false)) {
+      actions.add("sendAttachment");
+    }
     return Array.from(actions);
   },
   supportsButtons: ({ cfg }) => {
@@ -193,6 +196,18 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
           action: "searchSticker",
           query,
           limit: limit ?? undefined,
+          accountId: accountId ?? undefined,
+        },
+        cfg,
+      );
+    }
+
+    if (action === "sendAttachment") {
+      const sendParams = readTelegramSendParams(params);
+      return await handleTelegramAction(
+        {
+          action: "sendMessage",
+          ...sendParams,
           accountId: accountId ?? undefined,
         },
         cfg,

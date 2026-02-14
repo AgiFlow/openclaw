@@ -18,6 +18,8 @@ export type TelegramActionConfig = {
   editMessage?: boolean;
   /** Enable sticker actions (send and search). */
   sticker?: boolean;
+  /** Enable sendAttachment action for file uploads. */
+  sendAttachment?: boolean;
 };
 
 export type TelegramNetworkConfig = {
