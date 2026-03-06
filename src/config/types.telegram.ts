@@ -20,11 +20,19 @@ export type TelegramActionConfig = {
   sticker?: boolean;
   /** Enable sendAttachment action for file uploads. */
   sendAttachment?: boolean;
+  /** Enable forum topic creation. */
+  createForumTopic?: boolean;
 };
 
 export type TelegramNetworkConfig = {
   /** Override Node's autoSelectFamily behavior (true = enable, false = disable). */
   autoSelectFamily?: boolean;
+  /**
+   * DNS result order for network requests ("ipv4first" | "verbatim").
+   * Set to "ipv4first" to prioritize IPv4 addresses and work around IPv6 issues.
+   * Default: "ipv4first" on Node 22+ to avoid common fetch failures.
+   */
+  dnsResultOrder?: "ipv4first" | "verbatim";
 };
 
 export type TelegramInlineButtonsScope = "off" | "dm" | "group" | "all" | "allowlist";
@@ -114,6 +122,10 @@ export type TelegramAccountConfig = {
   webhookPath?: string;
   /** Local webhook listener bind host (default: 127.0.0.1). */
   webhookHost?: string;
+  /** Default target chat/user ID for outbound messages. */
+  defaultTo?: string | number;
+  /** Per-direct-chat configuration (key is Telegram user ID or "*"). */
+  direct?: Record<string, TelegramDirectConfig>;
   /** Per-action tool gating (default: true for all). */
   actions?: TelegramActionConfig;
   /**
@@ -157,6 +169,10 @@ export type TelegramTopicConfig = {
   allowFrom?: Array<string | number>;
   /** Optional system prompt snippet for this topic. */
   systemPrompt?: string;
+  /** Route this topic to a specific agent. */
+  agentId?: string;
+  /** Disable audio preflight transcription for mention detection. */
+  disableAudioPreflight?: boolean;
 };
 
 export type TelegramGroupConfig = {
@@ -176,9 +192,30 @@ export type TelegramGroupConfig = {
   allowFrom?: Array<string | number>;
   /** Optional system prompt snippet for this group. */
   systemPrompt?: string;
+  /** Disable audio preflight transcription for mention detection. */
+  disableAudioPreflight?: boolean;
+};
+
+export type TelegramDirectConfig = {
+  /** If true, require messages to be in a topic/thread. */
+  requireTopic?: boolean;
+  /** Per-topic configuration (key is message_thread_id as string). */
+  topics?: Record<string, TelegramTopicConfig>;
+  /** Optional allowlist for DM senders (numeric Telegram user IDs). */
+  allowFrom?: Array<string | number>;
+  /** Optional system prompt snippet. */
+  systemPrompt?: string;
+  /** If false, disable the bot for this direct config. */
+  enabled?: boolean;
+  /** If specified, only load these skills. Omit = all skills; empty = no skills. */
+  skills?: string[];
+  /** DM policy override for this direct config. */
+  dmPolicy?: DmPolicy;
 };
 
 export type TelegramConfig = {
   /** Optional per-account Telegram configuration (multi-account). */
   accounts?: Record<string, TelegramAccountConfig>;
+  /** Default account ID for outbound messages. */
+  defaultAccount?: string;
 } & TelegramAccountConfig;

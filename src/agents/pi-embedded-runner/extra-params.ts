@@ -188,6 +188,21 @@ function createBedrockNoCacheWrapper(baseStreamFn: StreamFn | undefined): Stream
     });
 }
 
+function createPromptTimeoutStreamFn(
+  baseStreamFn: StreamFn | undefined,
+  timeoutMs: number,
+): StreamFn {
+  const underlying = baseStreamFn ?? streamSimple;
+  return (model, context, options) => {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const existingSignal = options?.signal;
+    const signal = existingSignal
+      ? AbortSignal.any([existingSignal, timeoutSignal])
+      : timeoutSignal;
+    return underlying(model, context, { ...options, signal });
+  };
+}
+
 function isDirectOpenAIBaseUrl(baseUrl: unknown): boolean {
   if (typeof baseUrl !== "string" || !baseUrl.trim()) {
     return false;
@@ -401,18 +416,11 @@ function mergeAnthropicBetaHeader(
   return merged;
 }
 
-// Betas that pi-ai's createClient injects for standard Anthropic API key calls.
-// Must be included when injecting anthropic-beta via options.headers, because
-// pi-ai's mergeHeaders uses Object.assign (last-wins), which would otherwise
-// overwrite the hardcoded defaultHeaders["anthropic-beta"].
 const PI_AI_DEFAULT_ANTHROPIC_BETAS = [
   "fine-grained-tool-streaming-2025-05-14",
   "interleaved-thinking-2025-05-14",
 ] as const;
 
-// Additional betas pi-ai injects when the API key is an OAuth token (sk-ant-oat-*).
-// These are required for Anthropic to accept OAuth Bearer auth. Losing oauth-2025-04-20
-// causes a 401 "OAuth authentication is currently not supported".
 const PI_AI_OAUTH_ANTHROPIC_BETAS = [
   "claude-code-20250219",
   "oauth-2025-04-20",
@@ -441,9 +449,6 @@ function createAnthropicBetaHeadersWrapper(
       );
     }
 
-    // Preserve the betas pi-ai's createClient would inject for the given token type.
-    // Without this, our options.headers["anthropic-beta"] overwrites the pi-ai
-    // defaultHeaders via Object.assign, stripping critical betas like oauth-2025-04-20.
     const piAiBetas = isOauth
       ? (PI_AI_OAUTH_ANTHROPIC_BETAS as readonly string[])
       : (PI_AI_DEFAULT_ANTHROPIC_BETAS as readonly string[]);
@@ -866,6 +871,7 @@ export function applyExtraParamsToAgent(
   extraParamsOverride?: Record<string, unknown>,
   thinkingLevel?: ThinkLevel,
   agentId?: string,
+  promptTimeoutMs?: number,
 ): void {
   const extraParams = resolveExtraParams({
     cfg,
@@ -892,6 +898,12 @@ export function applyExtraParamsToAgent(
   if (wrappedStreamFn) {
     log.debug(`applying extraParams to agent streamFn for ${provider}/${modelId}`);
     agent.streamFn = wrappedStreamFn;
+  }
+
+  // Apply per-prompt timeout wrapper (innermost, closest to the API call)
+  if (promptTimeoutMs && promptTimeoutMs > 0) {
+    log.debug(`applying per-prompt timeout: ${promptTimeoutMs}ms for ${provider}/${modelId}`);
+    agent.streamFn = createPromptTimeoutStreamFn(agent.streamFn, promptTimeoutMs);
   }
 
   const anthropicBetas = resolveAnthropicBetas(merged, provider, modelId);

@@ -12,6 +12,14 @@ export function resolveAgentTimeoutSeconds(cfg?: OpenClawConfig): number {
   return Math.max(seconds, 1);
 }
 
+export function resolvePromptTimeoutMs(cfg?: OpenClawConfig): number | undefined {
+  const raw = normalizeNumber(cfg?.agents?.defaults?.promptTimeoutSeconds);
+  if (raw === undefined || raw <= 0) {
+    return undefined; // no per-prompt timeout configured
+  }
+  return Math.min(raw * 1000, MAX_SAFE_TIMEOUT_MS);
+}
+
 export function resolveAgentTimeoutMs(opts: {
   cfg?: OpenClawConfig;
   overrideMs?: number | null;

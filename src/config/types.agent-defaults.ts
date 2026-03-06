@@ -207,6 +207,8 @@ export type AgentDefaultsConfig = {
   /** Human-like delay between block replies. */
   humanDelay?: HumanDelayConfig;
   timeoutSeconds?: number;
+  /** Per-LLM-API-call timeout in seconds. When exceeded, triggers auth profile rotation and model fallback. */
+  promptTimeoutSeconds?: number;
   /** Max inbound media size in MB for agent-visible attachments (text note or future image attach). */
   mediaMaxMb?: number;
   /**
