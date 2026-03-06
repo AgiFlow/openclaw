@@ -1,9 +1,9 @@
 import type { OpenClawConfig } from "../config/config.js";
+import type { ModelCatalogEntry } from "./model-catalog.js";
 import { resolveAgentModelPrimaryValue, toAgentModelListLike } from "../config/model-input.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAgentConfig, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
-import type { ModelCatalogEntry } from "./model-catalog.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import { normalizeGoogleModelId } from "./models-config.providers.js";
 
@@ -540,9 +540,9 @@ export function resolveThinkingDefault(params: {
 }): ThinkLevel {
   const normalizedProvider = normalizeProviderId(params.provider);
   const modelLower = params.model.toLowerCase();
-  const perModelThinking =
-    params.cfg.agents?.defaults?.models?.[modelKey(params.provider, params.model)]?.params
-      ?.thinking;
+  const modelEntry = params.cfg.agents?.defaults?.models?.[modelKey(params.provider, params.model)];
+  // Prefer typed thinkingDefault, fall back to legacy params.thinking
+  const perModelThinking = modelEntry?.thinkingDefault ?? modelEntry?.params?.thinking;
   if (
     perModelThinking === "off" ||
     perModelThinking === "minimal" ||

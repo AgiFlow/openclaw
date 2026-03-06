@@ -31,6 +31,18 @@ export const AgentDefaultsSchema = z
             params: z.record(z.string(), z.unknown()).optional(),
             /** Enable streaming for this model (default: true, false for Ollama to avoid SDK issue #1205). */
             streaming: z.boolean().optional(),
+            /** Per-model thinking level override (takes precedence over global thinkingDefault). */
+            thinkingDefault: z
+              .union([
+                z.literal("off"),
+                z.literal("minimal"),
+                z.literal("low"),
+                z.literal("medium"),
+                z.literal("high"),
+                z.literal("xhigh"),
+                z.literal("adaptive"),
+              ])
+              .optional(),
           })
           .strict(),
       )
